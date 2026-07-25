@@ -1,0 +1,11 @@
+id,feature,title,steps,expected_result,priority
+TC-001,Login,Valid login with correct credentials,"1. Navigate to login page 2. Enter valid username 3. Enter valid password 4. Click Login",User is redirected to dashboard,High
+TC-002,Login,Invalid password shows error,"1. Navigate to login page 2. Enter valid username 3. Enter wrong password 4. Click Login","Error message shown: Invalid credentials",High
+TC-003,Login,Account lockout after 5 failed attempts,"1. Attempt login with wrong password 5 times",Account is locked and lockout message is shown,Medium
+TC-004,Checkout,Apply valid coupon code,"1. Add item to cart 2. Go to checkout 3. Enter valid coupon 4. Click Apply",Discount is applied and total is updated,High
+TC-005,Checkout,Apply expired coupon code,"1. Add item to cart 2. Go to checkout 3. Enter expired coupon 4. Click Apply","Error message shown: Coupon expired",Medium
+TC-006,Search,Search returns relevant results,"1. Enter keyword in search bar 2. Press Enter",Results relevant to keyword are displayed,High
+TC-007,Search,Search with no results,"1. Enter nonsense keyword 2. Press Enter","No results found message is shown",Low
+TC-008,Profile,Update profile picture,"1. Go to profile 2. Upload new picture 3. Save",Profile picture is updated and persists after reload,Medium
+TC-009,Payments,Payment fails with declined card,"1. Enter declined test card 2. Submit payment","Error message shown: Payment declined",High
+TC-010,Notifications,User receives email on order confirmation,"1. Complete an order",Confirmation email is received within 2 minutes,Medium

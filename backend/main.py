@@ -49,6 +49,10 @@ class TestPlanRequest(BaseModel):
     requirement: str
 
 
+class TestCaseRequest(BaseModel):
+    requirement: str
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "message": "QA Buddy Pro backend is running"}
@@ -56,10 +60,8 @@ def health():
 
 @app.post("/api/rag-query")
 def rag_query(req: RagQuery):
-    # 1. Embed the question
     query_vector = embed_model.encode(req.question).tolist()
 
-    # 2. Search Qdrant for the most relevant test cases
     results = qdrant.search(
         collection_name=COLLECTION_NAME,
         query_vector=query_vector,
@@ -68,7 +70,6 @@ def rag_query(req: RagQuery):
     context_items = [r.payload["text"] for r in results]
     context_text = "\n".join(f"- {item}" for item in context_items)
 
-    # 3. Ask Groq to answer using only that context
     completion = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[
@@ -92,7 +93,6 @@ def rag_query(req: RagQuery):
 
 @app.post("/api/test-plan")
 def generate_test_plan(req: TestPlanRequest):
-    # 1. Find similar past context (same retrieval pattern as rag-query)
     query_vector = embed_model.encode(req.requirement).tolist()
     results = qdrant.search(
         collection_name=COLLECTION_NAME,
@@ -101,7 +101,6 @@ def generate_test_plan(req: TestPlanRequest):
     )
     context_text = "\n".join(f"- {r.payload['text']}" for r in results)
 
-    # 2. Ask Groq to write a structured test plan
     completion = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[
@@ -121,7 +120,6 @@ def generate_test_plan(req: TestPlanRequest):
     )
     plan = completion.choices[0].message.content
 
-    # 3. Save it to Supabase so it's remembered
     supabase.table("test_plans").insert({
         "requirement": req.requirement,
         "generated_plan": plan,
@@ -129,3 +127,41 @@ def generate_test_plan(req: TestPlanRequest):
     }).execute()
 
     return {"plan": plan}
+
+
+@app.post("/api/test-cases")
+def generate_test_cases(req: TestCaseRequest):
+    query_vector = embed_model.encode(req.requirement).tolist()
+    results = qdrant.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=query_vector,
+        limit=3,
+    )
+    context_text = "\n".join(f"- {r.payload['text']}" for r in results)
+
+    completion = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a QA engineer. Generate test cases as a markdown table "
+                            "with columns: ID, Title, Steps, Expected Result, Priority. "
+                            "Cover positive, negative, and edge cases.",
+            },
+            {
+                "role": "user",
+                "content": f"Similar past test cases for reference:\n{context_text}\n\n"
+                            f"Requirement:\n{req.requirement}",
+            },
+        ],
+        temperature=0.3,
+    )
+    cases = completion.choices[0].message.content
+
+    supabase.table("test_cases").insert({
+        "requirement": req.requirement,
+        "generated_cases": cases,
+        "source": "manual",
+    }).execute()
+
+    return {"cases": cases}

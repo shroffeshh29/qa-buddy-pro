@@ -4,6 +4,8 @@ FastAPI server that powers the dashboard: RAG queries, test plan/case
 generation, flaky test analysis, and Jira/Outlook integrations.
 """
 import os
+import io
+import pandas as pd
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -32,7 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load these once at startup, not on every request - much faster
 print("Loading embedding model...")
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
@@ -51,6 +52,10 @@ class TestPlanRequest(BaseModel):
 
 class TestCaseRequest(BaseModel):
     requirement: str
+
+
+class FlakyAnalysisRequest(BaseModel):
+    csv_text: str
 
 
 @app.get("/api/health")
@@ -165,3 +170,58 @@ def generate_test_cases(req: TestCaseRequest):
     }).execute()
 
     return {"cases": cases}
+
+
+@app.post("/api/flaky-analyzer")
+def analyze_flaky_tests(req: FlakyAnalysisRequest):
+    df = pd.read_csv(io.StringIO(req.csv_text))
+    grouped = df.groupby("test_name")["status"].apply(list)
+
+    results = []
+    for test_name, statuses in grouped.items():
+        total = len(statuses)
+        passes = statuses.count("pass")
+        fails = statuses.count("fail")
+        flips = sum(1 for i in range(1, len(statuses)) if statuses[i] != statuses[i - 1])
+        flip_rate = flips / (total - 1) if total > 1 else 0
+        is_flaky = passes > 0 and fails > 0
+
+        results.append({
+            "test_name": test_name,
+            "total_runs": total,
+            "pass_rate": round(passes / total, 2),
+            "flip_rate": round(flip_rate, 2),
+            "flaky": is_flaky,
+        })
+
+    flaky_tests = [r for r in results if r["flaky"]]
+
+    summary = "No flaky tests detected."
+    if flaky_tests:
+        flaky_names = ", ".join(r["test_name"] for r in flaky_tests)
+        completion = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a senior SDET. Given a list of flaky test names and "
+                                "their pass/fail patterns, suggest the 2-3 most likely categories "
+                                "of root cause (e.g. race conditions, test data dependency, "
+                                "environment/network flakiness, timing issues). Be concise.",
+                },
+                {
+                    "role": "user",
+                    "content": f"Flaky tests detected: {flaky_names}\n\nFull data: {results}",
+                },
+            ],
+            temperature=0.3,
+        )
+        summary = completion.choices[0].message.content
+
+    supabase.table("flaky_analysis_runs").insert({
+        "total_tests": len(results),
+        "flaky_count": len(flaky_tests),
+        "summary": summary,
+    }).execute()
+
+    return {"results": results, "summary": summary}
